@@ -1,6 +1,6 @@
 import marimo
 
-__generated_with = "0.25.0"
+__generated_with = "0.25.1"
 app = marimo.App(
     width="medium",
     app_title="TD 1 - Vision avancée et transfer learning",
@@ -372,14 +372,14 @@ def _(mo):
     return
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
     **Votre réponse :**
 
-    1. ...
-    2. ...
-    3. ...
+    1. Les trois modèles sont d'accord pour la classification de l'image de chat et du café. Pour astronaute et fusée, ils donnent des réponses différentes et se trompent tous, donnant des réponses différentes. Les erreurs sur la classification de l'astronaute ne sont pas raisonnable, il y a peu de lien entre leur prédiction et astronaute; quand au fusée, même s'ils se trompent, l'erreur est plutôt raisonnable, puisque qu'il y a une ressemblance de forme pour obelisk et missile, et on peut voir une similitude des matériaux pour drilling platform.
+    2. Les modèles ont des scores de confiances inférieur à 14%, c'est bon signe. On peut donc utiliser ce score de confiance pour ne pas prendre en compte la prédiction du modèle lorsqu'il est inférieur à un seuil.
+    3. J'utiliserai DeiT-tiny sur une machine sans GPU, puisqu'il a le plus cours temps d'inférence.
     """)
     return
 
@@ -447,9 +447,29 @@ def _(mo):
     teste si le modèle a un attribut `fc`, ce qui permet d'écrire une seule fonction pour les trois modèles.
 
     - ResNet-18 (torchvision) : la tête s'appelle `fc`
-    - EfficientNet-B0 (torchvision) : ?
-    - DeiT-tiny (timm) : ?
+    - EfficientNet-B0 (torchvision) : `classifier`
+    - DeiT-tiny (timm) : `head`
     """)
+    return
+
+
+@app.cell(hide_code=True)
+def _(tp):
+    resnet_names = [n for n, _ in tp.charger_modele("resnet18").named_children()]
+    efficient_names = [n for n, _ in tp.charger_modele("efficientnet_b0").named_children()]
+    deit_names = [n for n, _ in tp.charger_modele("deit_tiny").named_children()]
+
+    print(f"resnet18 attributes: {resnet_names}")
+    print(f"efficientnet_b0 attributes: {efficient_names}")
+    print(f"deit_tiny attributes: {deit_names}")
+    return
+
+
+@app.cell
+def _(tp):
+    print(hasattr(tp.charger_modele("resnet18"), "fc"))
+    print(hasattr(tp.charger_modele("efficientnet_b0"), "classifier"))
+    print(hasattr(tp.charger_modele("deit_tiny"), "head"))
     return
 
 
@@ -459,7 +479,11 @@ def _(nn):
         """Remplace la couche de classification par nn.Identity() et renvoie le modèle."""
         # TODO 1 : trouvez la tête de classification et remplacez-la par nn.Identity().
         # La même fonction doit marcher pour les trois modèles.
-        raise NotImplementedError("À compléter")
+        attr_names = [n for n, _ in modele.named_children()]
+        classification_layer = attr_names[-1]
+        setattr(modele, classification_layer, nn.Identity())
+        return modele
+
     return (retirer_tete,)
 
 
@@ -487,9 +511,10 @@ def _(mo):
     return (bouton_embeddings,)
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _(
     bouton_embeddings,
+    img_te,
     img_tr,
     img_va,
     mo,
@@ -497,6 +522,7 @@ def _(
     retirer_tete,
     time,
     tp,
+    y_te,
     y_tr,
     y_va,
 ):
@@ -508,6 +534,7 @@ def _(
     _transfo = tp.transformation(224)
     _ds_tr = tp.DatasetImages(img_tr, y_tr, _transfo)
     _ds_va = tp.DatasetImages(img_va, y_va, _transfo)
+    _ds_te = tp.DatasetImages(img_te, y_te, _transfo)
     embeddings = {}
     for _n in _noms:
         if _caches[_n] is None:
@@ -515,8 +542,9 @@ def _(
             _t = time.perf_counter()
             _e_tr = tp.extraire_embeddings(_m, _ds_tr, progression=lambda it, n=_n: mo.status.progress_bar(it, title=f"{n} (entraînement)"))
             _e_va = tp.extraire_embeddings(_m, _ds_va, progression=lambda it, n=_n: mo.status.progress_bar(it, title=f"{n} (validation)"))
-            _ms = (time.perf_counter() - _t) / (len(_ds_tr) + len(_ds_va)) * 1000
-            tp.sauver_cache(f"tp1_emb_va_{_n}", tr=_e_tr, va=_e_va, ms=_ms, params=tp.nombre_parametres(_m))
+            _e_te = tp.extraire_embeddings(_m, _ds_te, progression=lambda it, n=_n: mo.status.progress_bar(it, title=f"{n} (test)"))
+            _ms = (time.perf_counter() - _t) / (len(_ds_tr) + len(_ds_va) + len(_ds_te)) * 1000
+            tp.sauver_cache(f"tp1_emb_va_{_n}", tr=_e_tr, va=_e_va, te=_e_te, ms=_ms, params=tp.nombre_parametres(_m))
             _caches[_n] = tp.charger_cache(f"tp1_emb_va_{_n}")
         embeddings[_n] = _caches[_n]
     mo.md("Embeddings calculés : " + ", ".join(f"{n} {embeddings[n]['tr'].shape}" for n in _noms))
@@ -534,7 +562,7 @@ def _(mo):
     return
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _(
     LogisticRegression,
     StandardScaler,
@@ -542,19 +570,25 @@ def _(
     make_pipeline,
     mo,
     np,
+    time,
     tp,
+    y_te,
     y_tr,
     y_va,
 ):
+    nbr_images = len(y_tr) + len(y_va) + len(y_te)
 
     resultats_fe = []
     for _n, _e in embeddings.items():
+        _t = time.perf_counter()
         _clf = make_pipeline(StandardScaler(), LogisticRegression(max_iter=3000, C=0.5))
         _clf.fit(_e["tr"], y_tr)
         _acc = float(np.mean(_clf.predict(_e["va"]) == np.asarray(y_va)))
+        _s = time.perf_counter() - _t
         resultats_fe.append({"méthode": f"{_n} + régression logistique", "accuracy validation": round(_acc, 3),
                              "dimension": _e["tr"].shape[1], "ms / image (lecture et prétraitement compris)": round(float(_e["ms"]), 1),
-                             "paramètres du backbone (M)": round(float(_e["params"]) / 1e6, 1)})
+                             "paramètres du backbone (M)": round(float(_e["params"]) / 1e6, 1),
+                             "durée (entraînement + validation)": round(float(_e["ms"]) * nbr_images / 1000 + _s, 1)})
     tp.tableau(resultats_fe, mo)
     return (resultats_fe,)
 
@@ -571,13 +605,13 @@ def _(mo):
     return
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
     **Votre réponse :**
 
-    1. ...
-    2. ...
+    1. En utilisant la régression logistique avec C = 0.5, EfficientNet-B0 donne les meilleurs embeddings sur cette tâche. Il le moins de paramètres.
+    2. DeiT-tiny est le moins couteux en temps de calcul, et il a un accuracy comparable avec Efficient-B0. Mais Efficient ne demande pas non plus beaucoup plus de puissance de calcul par rapport au DeiT-tiny.
     """)
     return
 
@@ -611,7 +645,43 @@ def _(np):
     def descripteurs_classiques(image):
         """image : PIL.Image -> vecteur numpy de longueur 1812 (HOG + histogrammes de couleur)."""
         # TODO 2
-        raise NotImplementedError("À compléter")
+
+        # 1. Redimensionner l'image et convertir en RGB
+        image = image.resize((128, 128)).convert("RGB")
+        img = np.array(image)
+
+        # 2. HOG sur l'image en niveaux de gris, avec des valeurs entre 0 et 1
+        gris = np.array(image.convert("L"), dtype=np.float32) / 255.0
+
+        descripteur_hog = hog(
+            gris,
+            orientations=9,
+            pixels_per_cell=(16, 16),
+            cells_per_block=(2, 2)
+        )
+
+        # 3. Histogrammes de couleur : 16 bins par canal RGB
+        histogrammes = []
+
+        for canal in range(3):
+            hist, _ = np.histogram(
+                img[:, :, canal],
+                bins=16,
+                range=(0, 256)
+            )
+
+            # Normalisation : somme égale à 1
+            hist = hist / hist.sum()
+            histogrammes.extend(hist)
+
+        # 4. Concaténer HOG (1764) et RGB (48)
+        descripteurs = np.concatenate([
+            descripteur_hog,
+            np.array(histogrammes, dtype=np.float64)
+        ])
+
+        return descripteurs
+
     return (descripteurs_classiques,)
 
 
@@ -622,7 +692,7 @@ def _(descripteurs_classiques, mo, tests, tp):
     return (ok_todo2,)
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _(
     SVC,
     StandardScaler,
@@ -665,7 +735,7 @@ def _(
 def _(mo, resultat_classique, resultats_fe, tp):
     tableau_comparatif = [resultat_classique] + list(resultats_fe)
     mo.vstack([mo.md(f"Hasard : {1 / 37:.1%} (37 classes)."), tp.tableau(tableau_comparatif, mo)])
-    return (tableau_comparatif,)
+    return
 
 
 @app.cell(hide_code=True)
@@ -681,14 +751,14 @@ def _(mo):
     return
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
     **Votre réponse :**
 
-    1. ...
-    2. ...
-    3. ...
+    1. Les modèles de deep learning améliorent l'accuracy sur la validation d'au moins 75% par rapport au baseline. Le temps de calcul est multiplié par plus de 3, mais l'augmentation de coût est totalement justifié au vus des performances.
+    2. Je pense que les descripteurs construits à la main ne sont pas capables de distinguer deux races proches. Dans le cas de deux races proches, j'imagine qu'ils ont des couleurs semblables, dans ce cas la parties histogrammes de couleur du descripteurs n'apporterait pas d'information pouvant les différentier. De même, il y a aussi forte chance que les deux races prochent ont des ressemblance de forme, ce qui rends le HOG moins utile.
+    3. J'imagine que la baseline classique serait suffisant pour classer des choses ayant des silhouettes différents (ex: simple séparation de chat et chien), ou biens des choses caractérisées surtout par leur couleur (ex: classification de fruits).
     """)
     return
 
@@ -722,7 +792,22 @@ def _(mo):
 def geler_backbone(modele, n_etages_degeles):
     """Gèle tout sauf les n derniers étages de modele.features et modele.classifier. Renvoie le modèle."""
     # TODO 3
-    raise NotImplementedError("À compléter")
+    
+    # 1. Geler tous les paramètres du modèle
+    for param in modele.parameters():
+        param.requires_grad = False
+
+    # 2. Dégeler les n derniers étages de features
+    if n_etages_degeles > 0:
+        for couche in list(modele.features)[-n_etages_degeles:]:
+            for param in couche.parameters():
+                param.requires_grad = True
+
+    # 3. Dégeler le classifieur
+    for param in modele.classifier.parameters():
+        param.requires_grad = True
+
+    return modele
 
 
 @app.cell(hide_code=True)
@@ -753,7 +838,26 @@ def _(torch):
     def creer_optimiseur(modele, lr_tete, lr_backbone):
         """Renvoie un AdamW avec un learning rate pour la tête et un autre pour le backbone dégelé."""
         # TODO 4
-        raise NotImplementedError("À compléter")
+
+        trainable_p = []
+
+        for couche in modele.features:
+            for p in couche.parameters():
+                if p.requires_grad:
+                    trainable_p.append(p)
+
+        if (len(trainable_p) > 0):
+            optimiseur = torch.optim.AdamW([
+                {"params": modele.classifier.parameters(), "lr": lr_tete}, 
+                {"params": trainable_p, "lr": lr_backbone}, 
+            ], weight_decay=1e-4)
+        else:
+            optimiseur = torch.optim.AdamW([
+                {"params": modele.classifier.parameters(), "lr": lr_tete}
+            ], weight_decay=1e-4)
+
+        return optimiseur
+
     return (creer_optimiseur,)
 
 
@@ -783,7 +887,27 @@ def _(mo):
 def entrainer_une_epoque(modele, chargeur, optimiseur, critere, appareil):
     """Entraîne le modèle sur un passage complet du chargeur. Renvoie la perte moyenne (float)."""
     # TODO 5
-    raise NotImplementedError("À compléter")
+    modele.train()
+    perte_totale = 0.0
+    nb_exemples = 0
+
+    for x, y in chargeur:
+        x = x.to(appareil)
+        y = y.to(appareil)
+
+        optimiseur.zero_grad()
+
+        sorties = modele(x)
+        perte = critere(sorties, y)
+
+        perte.backward()
+        optimiseur.step()
+
+        taille_lot = x.size(0)
+        perte_totale += perte.item() * taille_lot
+        nb_exemples += taille_lot
+
+    return float(perte_totale / nb_exemples)
 
 
 @app.cell(hide_code=True)
@@ -839,7 +963,7 @@ def _(mo):
     )
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _(
     bouton_entrainement,
     cfg_blocs,
@@ -916,19 +1040,25 @@ def _(historique_ft, mo, plt):
     return
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
     **Votre réponse :** reportez ici chaque configuration testée et son résultat, puis concluez.
 
     | Étages dégelés | Époques | LR tête | LR backbone | Accuracy de validation | Durée |
     |---|---|---|---|---|---|
-    | 0 | | | | | |
-    | | | | | | |
+    | 0 | 3 | 3e-3 | 3e-5 | 74.3% | 81s |
+    | 2 | 3 | 3e-3 | 3e-4 | 78.1% | 80s |
+    | 3 | 4 | 3e-3 | 1e-4 | 80.5% | 154s |
+    | 4 | 6 | 1e-3 | 3e-5 | 83.5% | 206s |
 
     Conclusion (à résolution égale, dégeler des étages vaut-il son coût par rapport à la tête seule ? Les écarts
     dépassent-ils l'incertitude de mesure ? Comment le résultat se situe-t-il par rapport au meilleur score de
-    l'étape 4 ? Quelle configuration retenez-vous ?) : ...
+    l'étape 4 ? Quelle configuration retenez-vous ?) :
+
+    A résolution égale, dégeler des étages vaux la peine par rapport à la tête seule, on gagne environs 4% d'accuracy de validation avec presque la même durée d'entraînement en dégelant 2 étages.
+    Par rapport au meilleur score de l'étape 4 (94.6%), le meilleur test a près de 11% d'accuracy de moins.
+    On retient donc l'utilisation de EfficientNet-B0 + une régression logistique.
     """)
     return
 
@@ -962,19 +1092,58 @@ def _(mo):
 
 
 @app.cell
-def _(bouton_test, classes, img_te, mo, modele_ft, np, tp, y_te):
+def _(
+    LogisticRegression,
+    StandardScaler,
+    bouton_test,
+    classes,
+    embeddings,
+    img_te,
+    make_pipeline,
+    mo,
+    modele_ft,
+    np,
+    tp,
+    y_te,
+    y_tr,
+):
     mo.stop(not tp.lance(bouton_test),
             mo.md("Une fois votre configuration choisie sur la validation, cliquez pour la mesure finale sur le test."))
+
     ds_test_ft = tp.DatasetImages(img_te, y_te, tp.transformation(160), pre_redim=184)
     pred_ft, probas_ft = tp.predire(modele_ft, ds_test_ft)
-    matrice_ft, _fig = tp.matrice_confusion(y_te, pred_ft, classes)
-    mo.vstack([mo.md(f"Accuracy du modèle retenu sur le jeu de test : **{float(np.mean(pred_ft == np.asarray(y_te))):.1%}** "
+
+    _clf = make_pipeline(StandardScaler(), LogisticRegression(max_iter=3000, C=0.5))
+    _clf.fit(embeddings["efficientnet_b0"]["tr"], y_tr)
+    pred_fe = _clf.predict(embeddings["efficientnet_b0"]["te"])
+    _acc_feature_extraction = float(np.mean(pred_fe == np.asarray(y_te)))
+    matrice_fe, _fig = tp.matrice_confusion(y_te, pred_fe, classes)
+    mo.vstack([mo.md(f"Accuracy du modèle retenu sur le jeu de test : **{float(np.mean(pred_fe == np.asarray(y_te))):.1%}** "
                      f"({len(y_te)} images)."), _fig])
-    return ds_test_ft, matrice_ft, pred_ft
+    return ds_test_ft, matrice_fe, pred_fe, pred_ft
 
 
 @app.cell(hide_code=True)
-def _(descripteurs_classiques, historique_ft, img_te, mo, np, pred_ft, svm_classique, tp, y_te):
+def _(
+    LogisticRegression,
+    StandardScaler,
+    descripteurs_classiques,
+    embeddings,
+    historique_ft,
+    img_te,
+    make_pipeline,
+    mo,
+    np,
+    pred_ft,
+    svm_classique,
+    tp,
+    y_te,
+    y_tr,
+):
+    _clf = make_pipeline(StandardScaler(), LogisticRegression(max_iter=3000, C=0.5))
+    _clf.fit(embeddings["efficientnet_b0"]["tr"], y_tr)
+    _acc_feature_extraction = float(np.mean(_clf.predict(embeddings["efficientnet_b0"]["te"]) == np.asarray(y_te)))
+
     _ds = tp.DatasetImages(img_te, y_te, transform=lambda x: x)
     _f_te = np.stack([descripteurs_classiques(_ds.image_brute(i)) for i in range(len(_ds))])
     _acc_classique = float(np.mean(svm_classique.predict(_f_te) == np.asarray(y_te)))
@@ -982,8 +1151,9 @@ def _(descripteurs_classiques, historique_ft, img_te, mo, np, pred_ft, svm_class
     _etages = _cfg.get("étages dégelés", _cfg.get("blocs dégelés"))
     _final = [
         {"méthode": "HOG + couleur + SVM (baseline classique)", "accuracy test": round(_acc_classique, 3)},
-        {"méthode": f"EfficientNet-B0, {_etages} étage(s) dégelé(s) (configuration retenue)",
+        {"méthode": f"EfficientNet-B0, {_etages} étage(s) dégelé(s)",
          "accuracy test": round(float(np.mean(pred_ft == np.asarray(y_te))), 3)},
+        {"méthode": "EfficientNet-B0 + régression logistique (configuration retenue)", "accuracy test": round(_acc_feature_extraction, 3)},
     ]
     mo.vstack([mo.md(f"**Mesure finale sur le jeu de test** ({len(y_te)} images), à reporter dans la fiche de décision :"),
                tp.tableau(_final, mo)])
@@ -1005,7 +1175,25 @@ def _(mo):
 def paires_les_plus_confondues(matrice, noms, k=5):
     """matrice[i, j] = nombre d'images de classe i prédites j. Renvoie [(nom_i, nom_j, nombre), ...]."""
     # TODO 6
-    raise NotImplementedError("À compléter")
+    l = []
+    n = len(matrice)
+
+    for i in range(n):
+        for j in range(n):
+            if (i != j and matrice[i][j] > 0):
+                l.append((noms[i], noms[j], matrice[i][j]))
+                
+                t = len(l) - 1
+                while (t >= 1 and l[t][2] > l[t - 1][2]):
+                    temp = l[t - 1]
+                    l[t - 1] = l[t]
+                    l[t] = temp
+                    t -= 1
+
+                if (len(l) > k):
+                    l.pop()
+    
+    return l
 
 
 @app.cell(hide_code=True)
@@ -1016,11 +1204,11 @@ def _(mo, tests, tp):
 
 
 @app.cell(hide_code=True)
-def _(classes, ds_test_ft, matrice_ft, mo, np, ok_todo6, pred_ft, tp, y_te):
+def _(classes, ds_test_ft, matrice_fe, mo, np, ok_todo6, pred_fe, tp, y_te):
     tp.bloquer_si(not ok_todo6, mo, "Terminez le TODO 6 pour voir les confusions.")
-    _paires = paires_les_plus_confondues(matrice_ft, classes, k=5)
+    _paires = paires_les_plus_confondues(matrice_fe, classes, k=5)
     _vrai, _predit, _ = _paires[0]
-    _y, _p = np.asarray(y_te), np.asarray(pred_ft)
+    _y, _p = np.asarray(y_te), np.asarray(pred_fe)
     _idx = np.flatnonzero((_y == classes.index(_vrai)) & (_p == classes.index(_predit)))[:4]
     _ref = np.flatnonzero(_y == classes.index(_predit))[:4]
     _imgs = [ds_test_ft.image_brute(i) for i in list(_idx) + list(_ref)]
@@ -1033,14 +1221,14 @@ def _(classes, ds_test_ft, matrice_ft, mo, np, ok_todo6, pred_ft, tp, y_te):
     return
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
     **Votre réponse :** ces confusions sont-elles compréhensibles pour un humain ? Quelles pistes (données,
     résolution, modèle) proposeriez-vous pour les réduire ? Elles seraient à évaluer sur la validation, puis sur
     un nouveau jeu de test.
 
-    ...
+    Personnellement j'ai du mal voir une délimitation claire entre ces 2 races de chien. On peut tenter de faire de la data augementation, et d'augmenter la résolution des images.
     """)
     return
 
@@ -1086,7 +1274,57 @@ def _(torch):
         """image : tenseur (1, 3, H, W). Renvoie une carte numpy (h, w) dans [0, 1] pour `classe`
         (par défaut, la classe prédite)."""
         # TODO 7
-        raise NotImplementedError("À compléter")
+        activations = {}
+        gradients = {}
+
+        def g(gradient):
+            gradients["gradient"] = gradient
+
+        def f(module, entree, sortie):
+            activations["activation"] = sortie
+            sortie.register_hook(g)
+
+        crochet = couche.register_forward_hook(f)
+
+        try:
+            modele.eval()
+            modele.zero_grad(set_to_none=True)
+
+            # 1. Passe avant
+            logits = modele(image)
+
+            # 2. Choisir la classe cible
+            if classe is None:
+                classe = logits.argmax(dim=1).item()
+
+            # 3. Score de la classe (avant softmax)
+            score = logits[0, classe]
+
+            # 4. Rétropropagation du score
+            score.backward()
+
+            # 5. Retirer le hook
+            crochet.remove()
+
+            # 6. Récupérer activations et gradients
+            A = activations["activation"][0]  # (K, h, w)
+            G = gradients["gradient"][0]      # (K, h, w)
+
+            # 7. Moyenne spatiale des gradients pour chaque canal
+            poids = G.mean(dim=(1, 2), keepdim=True)  # (K, 1, 1)
+
+            # 8. Combinaison pondérée des activations + ReLU
+            cam = torch.relu((poids * A).sum(dim=0))  # (h, w)
+
+            # 9. Normalisation entre 0 et 1
+            cam = cam.detach()
+            cam = (cam - cam.min()) / (cam.max() - cam.min() + 1e-8)
+
+            return cam.cpu().numpy()
+
+        finally:
+            crochet.remove()
+
     return (grad_cam,)
 
 
@@ -1125,12 +1363,16 @@ def _(
         _imgs.append(tp.superposer(tp.denormaliser(_x), _carte))
         _etat = "juste" if _y[_i] == _pr[_i] else "erreur"
         _titres.append(f"{_etat}\nréel {classes[_y[_i]]}\nprédit {classes[_pr[_i]]}")
+        if (_etat == "erreur"):
+            _carte = grad_cam(modele_ft, modele_ft.features[-1], _x[None].to(_dev), classe=int(_y[_i]))
+            _imgs.append(tp.superposer(tp.denormaliser(_x), _carte))
+            _titres.append(f"carte de la vraie classe\nréel {classes[_y[_i]]}\nprédit {classes[_pr[_i]]}")
     mo.vstack([mo.md("Ligne du haut : prédictions justes. Ligne du bas : erreurs."),
                (tp.grille(_imgs, _titres, n_col=4, taille=2.4))])
     return
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
     Pour une erreur, la carte explique la classe prédite, donc la mauvaise ; pour comparer, appelez aussi
@@ -1140,7 +1382,8 @@ def _(mo):
     **Votre réponse :** le modèle regarde-t-il l'animal ou autre chose (fond, coussin, main) ?
     Les erreurs s'expliquent-elles par la zone regardée ?
 
-    ...
+    Le modèle regarde en effet surtout l'animal dans les cas de bonne prédiction.
+    Quand le modèle se trompe, je remarque que l'erreur vient du fait qu'il ne regarde pas la totalité de la tête de l'animal, ou bien pas assez le reste du corps. Je considère donc que les erreurs s'expliquent par la zone regardée.
     """)
     return
 
@@ -1198,14 +1441,16 @@ def _(
     return
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
     **Votre réponse :** sur une image qui n'est ni un chat ni un chien, que renvoie le modèle ? Ses probabilités,
     qui somment toujours à 100 % sur les 37 races, permettent-elles de le détecter ? En service, qu'est-ce qui
     différera des images de test (photos d'utilisateurs, appareils, cadrage) ?
 
-    ...
+    Sur une image qui n'est ni un chat ni un chien, les trois races prédites les plus probables on une probabilité très faible.
+    On peut détecter ce genre de situation si la meilleur probabilité n'est pas très loin de 100% / 37.
+    En service, les images n'ont pas forcément la même dimension; l'animal à classer ne se trouve pas toujours dans la même partie de l'image, avec la même taille et distance.
     """)
     return
 
@@ -1226,13 +1471,13 @@ def _(mo):
     | Rubrique | Votre réponse |
     |---|---|
     | Problème métier | Reconnaître la race d'un animal à partir d'une photo |
-    | Baseline classique et son score (test) | ... |
-    | Modèle retenu et pourquoi | ... |
-    | Métrique principale et score obtenu (test, avec son intervalle à 95 %) | ... |
-    | Coût (temps d'entraînement, temps d'inférence, matériel) | ... |
-    | Principaux cas d'échec | ... |
-    | Le deep learning est-il justifié ici ? | ... |
-    | Déployable en l'état ? Sinon, que manque-t-il ? | ... |
+    | Baseline classique et son score (test) | HOG + couleur + SVM (accuracy = 10.1%) |
+    | Modèle retenu et pourquoi | EfficientNet-B0 + régression logistique, meilleur score avec ressource comparable |
+    | Métrique principale et score obtenu (test, avec son intervalle à 95 %) | 92.6% ± 2.1% |
+    | Coût (temps d'entraînement, temps d'inférence, matériel) | 95.9s (entraînement + inférence sur CPU) |
+    | Principaux cas d'échec | American Pit Bull Terrier prédit en Staffordshire Bull Terrier |
+    | Le deep learning est-il justifié ici ? | Oui, on a besoin d'un modèle profond et complexe pour attendre ce résultat |
+    | Déployable en l'état ? Sinon, que manque-t-il ? | Oui |
     """)
     return
 
@@ -1260,7 +1505,7 @@ def _(mo):
     return (bouton_neu,)
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _(
     LogisticRegression,
     SVC,
