@@ -242,7 +242,22 @@ def _(mo):
 def iou(boite_a, boite_b):
     """IoU entre deux boîtes [x1, y1, x2, y2]. Renvoie un float dans [0, 1]."""
     # TODO 1
-    raise NotImplementedError("À compléter")
+    xi1 = max(boite_a[0], boite_b[0])
+    yi1 = max(boite_a[1], boite_b[1])
+    xi2 = min(boite_a[2], boite_b[2])
+    yi2 = min(boite_a[3], boite_b[3])
+
+    area_i = max(0, xi2 - xi1) * max(0, yi2 - yi1)
+
+    area_a = (boite_a[2] - boite_a[0]) * (boite_a[3] - boite_a[1])
+    area_b = (boite_b[2] - boite_b[0]) * (boite_b[3] - boite_b[1])
+
+    area_u = area_a + area_b - area_i
+
+    if (area_u == 0):
+        return 0.0
+
+    return area_i / area_u
 
 
 @app.cell(hide_code=True)
@@ -278,7 +293,20 @@ def _(np):
     def nms(boites, scores, seuil_iou):
         """Non-Maximum Suppression. Renvoie la liste des indices conservés, par score décroissant."""
         # TODO 2
-        raise NotImplementedError("À compléter")
+        list_idx = []
+
+        restants = np.argsort(-scores).tolist()
+
+        while (len(restants) > 0):
+            i = restants.pop(0)
+            list_idx.append(i)
+            boite = boites[i]
+            for j in restants:
+                if (iou(boite, boites[j]) > seuil_iou):
+                    restants.remove(j)
+
+        return list_idx
+
     return (nms,)
 
 
@@ -490,17 +518,15 @@ def _(mo):
     return
 
 
-@app.cell
-def _(cv2, np):
-    def boites_depuis_masque(masque, aire_min):
-        """Une boîte [x1, y1, x2, y2] par composante connexe d'au moins aire_min pixels."""
-        # TODO 3
-        raise NotImplementedError("À compléter")
-    return (boites_depuis_masque,)
+@app.function
+def boites_depuis_masque(masque, aire_min):
+    """Une boîte [x1, y1, x2, y2] par composante connexe d'au moins aire_min pixels."""
+    # TODO 3
+    raise NotImplementedError("À compléter")
 
 
 @app.cell(hide_code=True)
-def _(boites_depuis_masque, mo, tests, tp):
+def _(mo, tests, tp):
     ok_todo3, _affichage = tp.verifier(tests.tests_boites_masque(boites_depuis_masque), mo)
     _affichage
     return (ok_todo3,)
@@ -576,7 +602,7 @@ def _(images_val, mo):
 
 
 @app.cell
-def _(boites_depuis_masque, cv2, hsv_aire, hsv_sat, hsv_teinte, hsv_val, np):
+def _(cv2, hsv_aire, hsv_sat, hsv_teinte, hsv_val, np):
     def detecter_casques_couleur(image_rgb):
         """Baseline classique : renvoie (masque, liste de (boite, score)) pour une image RGB."""
         _hsv = cv2.cvtColor(image_rgb, cv2.COLOR_RGB2HSV)
@@ -1195,7 +1221,7 @@ def _(mo):
 
 
 @app.cell
-def _(boites_depuis_masque, bouton_neu, cv2, mo, np, ok_todo3, ok_todo4, tp):
+def _(bouton_neu, cv2, mo, np, ok_todo3, ok_todo4, tp):
     tp.bloquer_si(not (ok_todo3 and ok_todo4), mo, "Terminez les TODO 3 et 4 d'abord.")
     mo.stop(not tp.lance(bouton_neu), mo.md("Cliquez pour lancer (plusieurs minutes sur CPU : trois époques de fine-tuning)."))
     _cible = tp.DONNEES / "neu-yolo"
