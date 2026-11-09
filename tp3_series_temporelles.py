@@ -1,6 +1,6 @@
 import marimo
 
-__generated_with = "0.25.0"
+__generated_with = "0.25.1"
 app = marimo.App(
     width="medium",
     app_title="TD 3 - Séries temporelles",
@@ -232,13 +232,13 @@ def _(mo):
     return
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
     **Votre réponse :**
 
-    1. ...
-    2. ...
+    1. On peut remarquer que la température de l'huile dans une journée est croissante à peu près entre 6h à 16h, puis elle baisse en continue entre 17h à 5h. Sur une année, la température de l'huile est en moyenne plus élevée vers le mois d'août, et plus faible vers le mois de février. Sur le long terme la température moyenne de l'huile a tendance à baisser.
+    2. Non, la température en fin de période est beaucoup plus faible qu'au début. Un modèle entraîné sur le début et testé sur la fin a forte chance de donner des prédictions trop élevées. Il faut donc normaliser les données par rapport à la différence succèssive.
     """)
     return
 
@@ -259,15 +259,30 @@ def _(mo):
     return
 
 
-@app.function
-def decouper_et_normaliser(valeurs, n_train, n_val, n_test):
-    """Découpage chronologique puis normalisation avec les statistiques de l'entraînement."""
-    # TODO 1
-    raise NotImplementedError("À compléter")
+@app.cell
+def _(np):
+    def decouper_et_normaliser(valeurs, n_train, n_val, n_test):
+        """Découpage chronologique puis normalisation avec les statistiques de l'entraînement."""
+        # TODO 1
+    
+        train = valeurs[0 : n_train]
+        val = valeurs[n_train : n_train + n_val]
+        test = valeurs[n_train + n_val : n_train + n_val + n_test]
+
+        moyenne = np.mean(train, axis = 0)
+        ecart_type = np.std(train, axis = 0)
+
+        train = (train - moyenne) / ecart_type
+        val = (val - moyenne) / ecart_type
+        test = (test - moyenne) / ecart_type
+
+        return (train, val, test, moyenne, ecart_type)
+
+    return (decouper_et_normaliser,)
 
 
 @app.cell(hide_code=True)
-def _(mo, tests, tp):
+def _(decouper_et_normaliser, mo, tests, tp):
     ok_todo1, _affichage = tp.verifier(tests.tests_decoupage(decouper_et_normaliser), mo)
     _affichage
     return (ok_todo1,)
@@ -295,7 +310,15 @@ def _(np):
     def creer_fenetres(serie, taille_entree, horizon):
         """Série 1D -> X (N, taille_entree), Y (N, horizon)."""
         # TODO 2
-        raise NotImplementedError("À compléter")
+    
+        T = len(serie)
+        N = T - taille_entree - horizon + 1
+
+        X = np.array([serie[i : i + taille_entree] for i in range(N)])
+        Y = np.array([serie[i + taille_entree : i + taille_entree + horizon] for i in range(N)])
+
+        return X, Y
+
     return (creer_fenetres,)
 
 
@@ -306,8 +329,17 @@ def _(creer_fenetres, mo, tests, tp):
     return (ok_todo2,)
 
 
-@app.cell
-def _(creer_fenetres, ett, mo, np, ok_todo1, ok_todo2, tp):
+@app.cell(hide_code=True)
+def _(
+    creer_fenetres,
+    decouper_et_normaliser,
+    ett,
+    mo,
+    np,
+    ok_todo1,
+    ok_todo2,
+    tp,
+):
     tp.bloquer_si(not (ok_todo1 and ok_todo2), mo, "Terminez les TODO 1 et 2 pour préparer les données.")
     ENTREE, HORIZON = 96, 24  # 4 jours de passé pour prévoir les 24 prochaines heures
     _valeurs = ett.drop(columns="date").to_numpy(dtype=np.float32)
@@ -357,12 +389,17 @@ def _(np):
     def prevision_naive(X, horizon):
         """Répète la dernière valeur observée."""
         # TODO 3a
-        raise NotImplementedError("À compléter")
+        valeur = X[:, -1]
+
+        return np.repeat(valeur[:, None], horizon, axis=1)
 
     def prevision_saisonniere(X, horizon, periode=24):
         """Recopie ce qui s'est passé une période plus tôt (horizon <= periode)."""
         # TODO 3b
-        raise NotImplementedError("À compléter")
+        if (horizon == periode):
+            return X[:, -periode:]
+        return X[:, -periode : horizon - periode]
+
     return prevision_naive, prevision_saisonniere
 
 
@@ -383,7 +420,7 @@ def _(mo):
     return
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _(
     HORIZON,
     X_te,
@@ -435,7 +472,7 @@ def _(mo):
 @app.cell
 def _(mo):
     mo.md(r"""
-    **Votre réponse :** ...
+    **Votre réponse :** La prévision saisonnière ne fait pas mieux que la naïve. Je ne l'attendait pas, on peut expliquer ceci par le fait que la variation au cours d'une journée est moins grande que la variation de température d'un jour à l'autre.
     """)
     return
 
@@ -488,7 +525,7 @@ def _(mo):
 
 
 @app.cell
-def _(nn, torch):
+def _(nn):
     class ConvCausale(nn.Module):
         def __init__(self, canaux_entree, canaux_sortie, noyau, dilatation):
             super().__init__()
@@ -498,7 +535,10 @@ def _(nn, torch):
         def forward(self, x):  # x : (lot, canaux, temps)
             """Convolution qui conserve la longueur et ne regarde jamais le futur."""
             # TODO 4
-            raise NotImplementedError("À compléter")
+            x_pad = nn.functional.pad(x, (self.marge, 0))
+            sortie = self.conv(x_pad)
+            return sortie
+
     return (ConvCausale,)
 
 
@@ -559,7 +599,7 @@ def _(mo):
 def decouper_en_patches(x, taille, pas):
     """(lot, longueur) -> (lot, n_patches, taille)."""
     # TODO 5
-    raise NotImplementedError("À compléter")
+    return x.unfold(1, taille, pas)
 
 
 @app.cell(hide_code=True)
@@ -620,7 +660,10 @@ def _(nn):
         def forward(self, x):  # x : (lot, longueur)
             """Le modèle interne prédit des écarts par rapport à la dernière valeur observée."""
             # TODO 6
-            raise NotImplementedError("À compléter")
+            dernier = x[:, -1:]
+
+            return dernier + self.modele(x - dernier)
+
     return (PrevisionNormalisee,)
 
 
@@ -652,7 +695,7 @@ def _(mo):
     return bouton_prevision, cfg_epoques, cfg_norm
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _(
     PrevisionLSTM,
     PrevisionNormalisee,
@@ -696,7 +739,7 @@ def _(
     return (compteur_entrainements,)
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _(Y_te, compteur_entrainements, mae_degres, mo, resultats_classiques, tp):
     _ = compteur_entrainements  # relance cette cellule après chaque entraînement
     predictions_deep, _lignes = {}, []
@@ -764,14 +807,14 @@ def _(mo):
     return
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
     **Votre réponse :**
 
-    1. ...
-    2. ...
-    3. ...
+    1. Sans normalisation par fenêtre, les réseaux ne font pas mieux que la prévision naïve, ils ont du mal à s'adapter à la tendance sur le long terme. Ils performent mieux que la prévision naïve lorsqu'on applique la normalisation par fenêtre, on en conclue donc que le prétraitement a plus d'importance par rapport à l'architecture.
+    2. Le meilleur modèle est la régression linéaire régularisée. Elle a seulement 2328 paramètres compéré aux réseaux ayant tous plus de 18k paramètres; son temps d'entraînement est d'ordre de grandeur de 0.01s alors que les réseaux ont entre 36s à 214s.
+    3. Le Transformer n'est pas meilleur que le LSTM et le TCN ici. Il pourrait prendre l'avantage quand le volume de données est plus conséquent, avec une longueur d'horizon plus grande et un nombre de séries plus importante. Le Transformer est plus gourmant en demande de données d'entraînement, et il performe mieux sur les tâches très complexes.
     """)
     return
 
@@ -793,7 +836,7 @@ def _(mo):
     return
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _(mo, np, plt, serie_te, serie_tr, serie_va, tp):
     FENETRE_ANOMALIE = 48
     serie_te_anomalies, etiquettes_te, evenements = tp.injecter_anomalies(serie_te, n_evenements=12, graine=0)
@@ -861,7 +904,7 @@ def _(mo):
     return (bouton_ae,)
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _(A_tr, AutoencodeurConv, bouton_ae, mo, plt, torch, tp):
     _chemin = tp.SORTIES / "tp3_autoencodeur.pt"
     mo.stop(not (tp.lance(bouton_ae) or _chemin.exists()), mo.md("Cliquez pour lancer (moins de 30 secondes)."))
@@ -903,7 +946,20 @@ def _(torch):
     def erreur_reconstruction(modele, X):
         """Une erreur quadratique moyenne par fenêtre : tableau numpy de forme (N,)."""
         # TODO 7
-        raise NotImplementedError("À compléter")
+        try:
+            appareil = next(modele.parameters()).device
+        except StopIteration:
+            appareil = torch.device("cpu")
+
+        x = torch.as_tensor(X, device=appareil)
+
+        with torch.no_grad():
+            prediction = modele(x)
+
+        erreur = ((x - prediction) ** 2).mean(dim = (1, 2))
+
+        return erreur.numpy()
+
     return (erreur_reconstruction,)
 
 
@@ -935,7 +991,19 @@ def _(np):
     def precision_rappel(scores, etiquettes, seuil):
         """Renvoie (precision, rappel) pour les alertes scores > seuil."""
         # TODO 8
-        raise NotImplementedError("À compléter")
+        alertes = np.array(scores) > seuil
+        etiquettes = np.array(etiquettes)
+    
+        true_positive = np.sum((alertes == 1) & (etiquettes == 1))
+        true_negative = np.sum((alertes == 0) & (etiquettes == 0))
+        false_positive = np.sum((alertes == 1) & (etiquettes == 0))
+        false_negative = np.sum((alertes == 0) & (etiquettes == 1))
+
+        precision = 0 if (true_positive + false_positive == 0) else true_positive / (true_positive + false_positive)
+        rappel = 0 if (true_positive + false_negative == 0) else true_positive / (true_positive + false_negative)
+
+        return (precision, rappel)
+
     return (precision_rappel,)
 
 
@@ -958,7 +1026,7 @@ def _(mo):
     return
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _(
     A_te,
     A_tr,
