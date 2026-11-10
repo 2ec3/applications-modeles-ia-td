@@ -1111,15 +1111,15 @@ def _(
         """Fausses alertes, anomalies manquées et coût total pour un seuil donné."""
         alertes = scores > seuil
         fausses, manquees = int((alertes & (etiquettes == 0)).sum()), int((~alertes & (etiquettes == 1)).sum())
-        return fausses, manquees, cout_alerte.value * fausses + cout_oubli.value * manquees
+        return fausses, manquees, cout_alerte.value * fausses + cout_oubli.value * manquees, sum(alertes)
 
     # Le seuil est défini sur la validation, et le coût qui sert à le choisir aussi.
     _centiles = np.arange(50, 100)
     _couts_va = [_bilan(_sv, y_anomalie_va, np.percentile(_sv, _c))[2] for _c in _centiles]
     _seuil = np.percentile(_sv, seuil_centile.value)
-    _fa_va, _ou_va, _cout_va = _bilan(_sv, y_anomalie_va, _seuil)
+    _fa_va, _ou_va, _cout_va, _al_va = _bilan(_sv, y_anomalie_va, _seuil)
     # Puis on l'applique tel quel au test.
-    _fa, _ou, _cout = _bilan(_s, y_anomalie, _seuil)
+    _fa, _ou, _cout, _al = _bilan(_s, y_anomalie, _seuil)
     _p, _r = precision_rappel(_s, y_anomalie, _seuil)
     _fig, _ax = plt.subplots(2, 1, figsize=(9, 5))
     _ax[0].bar(range(len(_s)), _s, color=["tab:red" if v else "tab:blue" for v in y_anomalie], width=1.0)
@@ -1132,9 +1132,9 @@ def _(
     _ax[1].set_ylabel("coût total sur la validation")
     _fig.tight_layout()
     mo.vstack([
-        mo.md(f"**Sur la validation**, au seuil choisi : {_fa_va} fausses alertes, {_ou_va} anomalies manquées, "
+        mo.md(f"**Sur la validation**, au seuil choisi : {_al_va} alertes, {_fa_va} fausses alertes, {_ou_va} anomalies manquées, "
               f"coût total {_cout_va}. Le coût y est minimal au centile **{int(_centiles[int(np.argmin(_couts_va))])}**."),
-        mo.md(f"**Sur le test**, avec ce même seuil : **{_fa}** fausses alertes, **{_ou}** anomalies manquées, "
+        mo.md(f"**Sur le test**, avec ce même seuil : **{_al}** alertes, **{_fa}** fausses alertes, **{_ou}** anomalies manquées, "
               f"précision {_p:.0%}, rappel {_r:.0%}, coût total **{_cout}** "
               f"({len(_s)} fenêtres de test, {len(_sv)} de validation)."),
         _fig,
@@ -1175,7 +1175,7 @@ def _(mo, np, plt, scores_anomalie, scores_validation, seuil_centile):
     return
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
     **Votre réponse :**
@@ -1187,7 +1187,11 @@ def _(mo):
        cas, que faudrait-il prévoir pour un système qui reste en service plusieurs mois ?
     3. Quels types d'anomalies injectées sont les plus difficiles à détecter, et pourquoi ?
 
-    ...
+    Si une panne de transformateur coûte 50 fois plus cher qu'un déplacement inutile, on retient le seuil de 52% pour l'alerte. Si l'équipe ne peut traiter que deux alertes par semaine, il faut qu'on fixe le seuil très haut pour avoir le moins d'alerte possible (il faut avoir moins de 2 alertes par 7 * 24h = 168h, soit 168 / 12 = 14 fenêtres, donc en moyenne moins de 1 alertes toute les 7 fenêtres, donc moins de  273 / 7 = 39 alertes sur les 237 fenêtres de test), il faut avoir le seuil supérieur ou égal à 84%.
+
+    Le seuil choisi sur la validation me donne à peu près le même nombre de fausses alertes, mais le nombre d'oublis a doublé. Les scores ne sont pas répartis de la même façon sur les deux ensembles de données: les scores sur les données de test sont plus regroupés autour de de la médiane, et les scores sur les données de validation sont plus étalés et tirés vers les faible valeur. Il faut prévoir une adaptation au moins hebdomadaire du seuil de score.
+
+    Les anomalies de type capteur figé sont les plus difficiles à détecter, car ils imitent aux mieux l'évolution des paramètres (comme nous l'avons vu à l'étape 4 pour l'OT).
     """)
     return
 
@@ -1206,14 +1210,14 @@ def _(mo):
     | Rubrique | Prévision de la température | Détection d'anomalies |
     |---|---|---|
     | Problème métier | Anticiper une surchauffe du transformateur | Alerter l'opérateur sur un comportement anormal |
-    | Baseline classique et son score | ... | ... |
-    | Modèle retenu et pourquoi | ... | ... |
-    | Métrique principale et score obtenu | ... | ... |
-    | Seuil ou réglage retenu, justification métier | ... | ... |
-    | Coût (entraînement, inférence, matériel) | ... | ... |
-    | Principaux cas d'échec | ... | ... |
-    | Le deep learning est-il justifié ici ? | ... | ... |
-    | Déployable en l'état ? Sinon, que manque-t-il ? | ... | ... |
+    | Baseline classique et son score | 1.269 (MAE) | 0.445 (AP) & 0.529 (F1) |
+    | Modèle retenu et pourquoi | régression linéaire (meilleur performance à coût très bas) | autoencodeur (meilleur score) |
+    | Métrique principale et score obtenu | 1.269 (MAE) | 0.557 (AP) & 0.612 (F1) |
+    | Seuil ou réglage retenu, justification métier | normalisation par fenêtre | seuil à 52 centile des scores de validation, optimisation de coût |
+    | Coût (entraînement, inférence, matériel) | 0.01s (entraînement) \| < 0.01s (inférence) \| CPU | < 1m (entraînement) \| < 0.01s (inférence) \| CPU |
+    | Principaux cas d'échec | variations non périodiques ? | capteur figé |
+    | Le deep learning est-il justifié ici ? | non | oui |
+    | Déployable en l'état ? Sinon, que manque-t-il ? | oui | non, coût d'erreurs trop élevé |
     """)
     return
 
@@ -1229,14 +1233,21 @@ def _(mo):
     return
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
     **Votre réponse :** dans quels cas le deep learning a-t-il nettement gagné, dans quels cas la méthode
     classique a-t-elle fait jeu égal ou mieux ? Proposez une règle pratique pour décider, au début d'un
     projet, s'il faut investir dans un réseau de neurones.
 
-    ...
+    | Tâche | Deep learning ou classique | Modèle |
+    |---|---|---|
+    | classification d'images | deep learning | EfficientNet-B0 + régression logistique (DL + feature extraction) |
+    | détection d'objets | deep learning ? | ? |
+    | prédiction de valeur de série temporelle | classique | régression linéaire régularisée |
+    | détection d'anomalie | deep learning | autoencodeur (imitation cas normal + seuil de différence) |
+
+    On vérifie d'abord dans un premier temps si la baseline et les méthodes classiques satisfont la tâche demandé, sinon on teste avec un modèle de deep learning léger, et si cela ne suffit toujours pas, on teste la performance des modèles plus lourds.
     """)
     return
 
@@ -1269,7 +1280,7 @@ def _(mo):
     return (bouton_skab,)
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _(
     AutoencodeurConv,
     bouton_skab,
@@ -1337,6 +1348,8 @@ def _(mo):
        information précieuse pour le technicien qui intervient.
     5. Remplissez la fiche de décision pour ce volet : l'autoencodeur vaut-il son coût face à
        l'Isolation Forest ?
+
+    Le protocole B (début de chaque expérience) donne de nette meilleurs résultats. Il est vrai que le protocole A voit plus de données normales, mais le protocole B entraîne les modèles sur des données juste avant les anomalies, ce qui est plus pertinant.
 
     ### Pour aller plus loin (si vous avez terminé)
 
