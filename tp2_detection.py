@@ -417,10 +417,10 @@ def _(mo):
     return
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    **Votre réponse :** ...
+    **Votre réponse :** Les classes ne sont pas équilibrées, la classe "no_goggle" est notamment sous-représenté, elle risque d'être plus mal détectée, c'est embêtant puisque le système de sécurité ne saura pas détecter les personnes sans protection de lunettes.
     """)
     return
 
@@ -444,7 +444,7 @@ def _(mo):
     return (seuil_coco,)
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _(images_val, mo, seuil_coco, time, tp):
     yolo_coco = tp.charger_yolo("yolov8n.pt")
     _imgs, _titres, _vus = [], [], set()
@@ -483,12 +483,12 @@ def _(mo):
 
 @app.cell(hide_code=True)
 def _(mo):
-    seuil_nms = mo.ui.slider(0.1, 1.0, step=0.05, value=0.5, label="Seuil d'IoU de la NMS", show_value=True)
+    seuil_nms = mo.ui.slider(0.001, 1.0, step=0.001, value=0.5, label="Seuil d'IoU de la NMS", show_value=True)
     seuil_nms
     return (seuil_nms,)
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _(images_val, mo, nms, ok_todo2, seuil_nms, tp, yolo_coco):
     tp.bloquer_si(not ok_todo2, mo, "Terminez le TODO 2 pour voir votre NMS à l'œuvre.")
     _p = images_val[1]
@@ -527,15 +527,28 @@ def _(mo):
     return
 
 
-@app.function
-def boites_depuis_masque(masque, aire_min):
-    """Une boîte [x1, y1, x2, y2] par composante connexe d'au moins aire_min pixels."""
-    # TODO 3
-    raise NotImplementedError("À compléter")
+@app.cell
+def _(cv2, np):
+    def boites_depuis_masque(masque, aire_min):
+        """Une boîte [x1, y1, x2, y2] par composante connexe d'au moins aire_min pixels."""
+        # TODO 3
+        connected_components = cv2.connectedComponentsWithStats(masque.astype(np.uint8))
+        stats = connected_components[2]
+
+        boites = []
+
+        for i in range(1, len(stats)):
+            x, y, largeur, hauteur, aire = stats[i]
+            if (aire >= aire_min):
+                boites.append([x, y, x + largeur, y + hauteur])
+
+        return boites
+
+    return (boites_depuis_masque,)
 
 
 @app.cell(hide_code=True)
-def _(mo, tests, tp):
+def _(boites_depuis_masque, mo, tests, tp):
     ok_todo3, _affichage = tp.verifier(tests.tests_boites_masque(boites_depuis_masque), mo)
     _affichage
     return (ok_todo3,)
@@ -566,7 +579,36 @@ def _(mo):
 def evaluer_detections(predictions, verites, seuil_iou=0.5):
     """predictions : liste de (boite, score) ; verites : liste de boîtes. Renvoie tp, fp, fn, precision, rappel."""
     # TODO 4
-    raise NotImplementedError("À compléter")
+    predictions_c = sorted(predictions, key=lambda predictions: predictions[1])
+    verites_c = verites.copy()
+
+    dict = {"tp": 0, "fp": 0, "fn": 0}
+
+    while (len(predictions_c) > 0 and len(verites_c) > 0):
+        (boite_p, _) = predictions_c.pop()
+
+        max_iou = 0
+        max_i = None
+
+        for i in range(len(verites_c)):
+            boite_iou = iou(boite_p, verites_c[i])
+            if (boite_iou >= max_iou):
+                max_iou = boite_iou
+                max_i = i
+        
+        if (max_iou >= seuil_iou):
+            verites_c.pop(max_i)
+            dict["tp"] += 1
+        else:
+            dict["fp"] += 1
+
+    dict["fp"] += len(predictions_c)
+    dict["fn"] += len(verites_c)
+
+    dict["precision"] = 0 if (dict["tp"] + dict["fp"] == 0) else dict["tp"] / (dict["tp"] + dict["fp"])
+    dict["rappel"] = 0 if (dict["tp"] + dict["fn"] == 0) else dict["tp"] / (dict["tp"] + dict["fn"])
+
+    return dict
 
 
 @app.cell(hide_code=True)
@@ -610,8 +652,8 @@ def _(images_val, mo):
     return hsv_aire, hsv_image, hsv_sat, hsv_teinte, hsv_val
 
 
-@app.cell
-def _(cv2, hsv_aire, hsv_sat, hsv_teinte, hsv_val, np):
+@app.cell(hide_code=True)
+def _(boites_depuis_masque, cv2, hsv_aire, hsv_sat, hsv_teinte, hsv_val, np):
     def detecter_casques_couleur(image_rgb):
         """Baseline classique : renvoie (masque, liste de (boite, score)) pour une image RGB."""
         _hsv = cv2.cvtColor(image_rgb, cv2.COLOR_RGB2HSV)
@@ -643,7 +685,7 @@ def _(detecter_casques_couleur, hsv_image, images_val, mo, ok_todo3, tp):
     return
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _(detecter_casques_couleur, tp):
     def evaluer_baseline(images, barre=None):
         """Précision, rappel, F1 et comptes de la baseline couleur sur la classe casque, cumulés sur des images."""
@@ -704,13 +746,13 @@ def _(mo):
     return
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
     **Votre réponse :**
 
-    1. ...
-    2. ...
+    1. L'erreur principale de la baseline est l'oubli de casque alors qu'il y en a: son rappel est beaucoup plus important que sa précision. Elle se trompe sur les casques blancs et bleus, les véhicules jaunes, les casques trop petits sur l'image.
+    2. Elle ne peut pas être utiliser pour détecter l'absence de casque, car sa précision est trop faible (grande chance que l'on a un faux positif: personne sans casque non détectée) et sa rappel aussi (grande chance d'avoir de faux négatif: alerte alors qu'il y a un casque).
     """)
     return
 
@@ -751,7 +793,7 @@ def _(mo):
     return bouton_yolo, cfg_epoques, cfg_fraction, cfg_resolution
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _(
     bouton_yolo,
     cfg_epoques,
@@ -1233,7 +1275,7 @@ def _(mo):
 
 
 @app.cell
-def _(bouton_neu, cv2, mo, np, ok_todo3, ok_todo4, tp):
+def _(boites_depuis_masque, bouton_neu, cv2, mo, np, ok_todo3, ok_todo4, tp):
     tp.bloquer_si(not (ok_todo3 and ok_todo4), mo, "Terminez les TODO 3 et 4 d'abord.")
     mo.stop(not tp.lance(bouton_neu), mo.md("Cliquez pour lancer (plusieurs minutes sur CPU : trois époques de fine-tuning)."))
     _cible = tp.DONNEES / "neu-yolo"
