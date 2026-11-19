@@ -870,14 +870,14 @@ def _(mo):
     return
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
     **Votre réponse :**
 
-    1. ...
-    2. ...
-    3. ...
+    1. La classe la mieux classée est Person, et la classe no_helmet est la moins bien détectée. Cette observation fait sens: ce sont respectivement les classes la plus représentée est la moins représentée, de même pour la taille occupée des boîtes sur les images.
+    2. Le mAP@0.5:0.95 est toujours inférieur ou égal au mAP@0.5, car elle fait la moyenne des précision avec différents seuils entre 0.5 à 0.95, le critère de considérer un encadrement comme bon est donc plus strict, ce qui baisse le score par rapport à mAP@0.5 seul. L'écart est le plus grand pour les classes goggles et forklift: goggles car les boîtes sont petites, un petit décalage entraîne une grande baisse de l'IoU; pour forklift, on peut penser que c'est dû à la sous-représentation de la classe.
+    3. Le fine-tuning avec 30% des images ayant une résolution à 320px sur 2 époques dure 104s. Donc avec 100% des images avec une résolution de 416px sur 20 époques me faudrait 104s * (100%/30%) * (20 époques / 2 époques) * (416px / 320px)^2 = 5858s = 1h37m38s. C'est une durée certe longue, mais acceptable, on peut utiliser le CPU actuel pour ce type de projet.
     """)
     return
 
@@ -914,11 +914,28 @@ def _(mo):
     return
 
 
-@app.function
+@app.function(hide_code=True)
 def courbe_seuils(predictions_par_image, verites_par_image, seuils):
     """Précision, rappel et F1 cumulés sur toutes les images, pour chaque seuil de confiance."""
     # TODO 5
-    raise NotImplementedError("À compléter")
+    dict = {"seuil": seuils, "precision": [], "rappel": [], "f1": []}
+
+    for seuil in seuils:
+        tp, fp, fn = 0, 0, 0
+        for i in range(len(verites_par_image)):
+            predictions = [(boite, score) for boite, score in predictions_par_image[i] if score >= seuil]
+            d = evaluer_detections(predictions, verites_par_image[i], seuil)
+            tp += d["tp"]
+            fp += d["fp"]
+            fn += d["fn"]
+        precision = 0 if (tp + fp == 0) else tp / (tp + fp)
+        rappel = 0 if (tp + fn == 0) else tp / (tp + fn)
+        f1 = 0 if (precision + rappel == 0) else 2 * precision * rappel / (precision + rappel)
+        dict["precision"].append(precision)
+        dict["rappel"].append(rappel)
+        dict["f1"].append(f1)
+    
+    return dict
 
 
 @app.cell(hide_code=True)
@@ -929,7 +946,7 @@ def _(mo, ok_todo4, tests, tp):
     return (ok_todo5,)
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _(images_test, images_val, modele_fourni, tp):
     # Validation : pour choisir le seuil. Test : pour mesurer ce que donne le seuil choisi.
     predictions_val = tp.predictions_yolo(modele_fourni, images_val, conf=0.01, taille=416)
@@ -1091,14 +1108,14 @@ def _(mo):
     return
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
     **Votre réponse :**
 
-    1. ...
-    2. ...
-    3. ...
+    1. Pour la classe no_helmet, le rappel a plus d'importance que la précision, puisque un manque d'alerte qui peut conduire à un danger est plus grave qu'une fausse alerte. Il faudrait avoir un seuil le plus petit possible si on veux maximiser le rappel, mais le gain est pas assez significatif pour négliger la précision, on a donc choisi le seuil 0.2 pour maximiser le F1.
+    2. La précision et le rappel mesurés sur le test ne sont pas trop éloignés de ce que nous lisons sur la courbe pour la validation. Sachant qu'il y a n = 179 objets de cette classe: l'intervalle de confiance à 95% pour la précision est 71% ± 6.3%, et pour le rappel 48% ± 7,3%.
+    3. Les erreurs d'oublis sont surtout présent quand les têtes sont trop petit sur l'image; les fausses alertes sont surtout causées par un mauvais cadrage.
     """)
     return
 
@@ -1131,7 +1148,7 @@ def _(mo):
     return (bouton_seg,)
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _(bouton_seg, images_val, mo, modele_fourni, np, time, torch, tp):
     mo.stop(not tp.lance(bouton_seg), mo.md("Cliquez pour lancer (si verifier_installation.py n'a pas été lancé : téléchargement de MobileSAM, 40 Mo, et de DeepLab, 42 Mo)."))
     _deeplab = tp.charger_deeplab()
@@ -1174,10 +1191,10 @@ def _(mo):
     return
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    **Votre réponse :** ...
+    **Votre réponse :** L'approche YOLO + SAM permet de compter les personnes, mais DeepLab est plus rapide. On utilise donc DeepLab dans les cas où on a besoin d'une réponse rapide, sans nécessiter une segmentation fine; et YOLO + SAM dans le cas où la qualité prime sur la vitesse.
     """)
     return
 
@@ -1237,14 +1254,14 @@ def _(mo):
     | Rubrique | Votre réponse |
     |---|---|
     | Problème métier | Détecter les personnes sans casque sur un chantier |
-    | Baseline classique et son score (test, classe casque : elle ne détecte pas l'absence de casque) | ... |
-    | Modèle retenu et pourquoi | ... |
-    | Métrique principale et score obtenu (test, classe `no_helmet`, au seuil retenu) | ... |
-    | Seuil retenu et justification métier | ... |
-    | Coût (entraînement, inférence, matériel) ; pour l'inférence, le modèle fourni a la même architecture que le YOLOv8n de l'étape 4 | ... |
-    | Principaux cas d'échec | ... |
-    | Le deep learning est-il justifié ici ? | ... |
-    | Déployable en l'état ? Sinon, que manque-t-il ? | ... |
+    | Baseline classique et son score (test, classe casque : elle ne détecte pas l'absence de casque) | HSV \| précision = 34.4% \| rappel = 6.6% \| F1 = 0.11  |
+    | Modèle retenu et pourquoi | YOLOv8n, résultat largement meilleur, coût acceptable |
+    | Métrique principale et score obtenu (test, classe `no_helmet`, au seuil retenu) | précision = 71% ± 6.3% \| rappel = 48% ± 7,3% |
+    | Seuil retenu et justification métier | 0.2, équilibre entre précision et rappel |
+    | Coût (entraînement, inférence, matériel) ; pour l'inférence, le modèle fourni a la même architecture que le YOLOv8n de l'étape 4 | CPU \| entraînement 1h40m \| inférence 50ms |
+    | Principaux cas d'échec | personnes petites (éloignées) sur l'image |
+    | Le deep learning est-il justifié ici ? | oui |
+    | Déployable en l'état ? Sinon, que manque-t-il ? | non, rappel trop élevé |
     """)
     return
 
@@ -1274,7 +1291,7 @@ def _(mo):
     return (bouton_neu,)
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _(boites_depuis_masque, bouton_neu, cv2, mo, np, ok_todo3, ok_todo4, tp):
     tp.bloquer_si(not (ok_todo3 and ok_todo4), mo, "Terminez les TODO 3 et 4 d'abord.")
     mo.stop(not tp.lance(bouton_neu), mo.md("Cliquez pour lancer (plusieurs minutes sur CPU : trois époques de fine-tuning)."))
