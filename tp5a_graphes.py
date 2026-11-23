@@ -1,6 +1,6 @@
 import marimo
 
-__generated_with = "0.25.0"
+__generated_with = "0.25.1"
 app = marimo.App(
     width="medium",
     app_title="TD 5a - Graphes et recommandation",
@@ -196,7 +196,7 @@ def _(mo):
     return
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _(cora, mo, torch, tp):
     from sklearn.linear_model import LogisticRegression
 
@@ -222,13 +222,13 @@ def _(cora, mo, torch, tp):
     return (resultats_classiques,)
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
     **Votre réponse :** laquelle des deux informations est la plus utile ici, le contenu ou les liens ?
     Reliez-le au pourcentage de citations entre articles du même thème affiché plus haut.
 
-    ...
+    Les liens sont plus utiles ici pour la prédiction de thèmes. Ce n'est pas surprenant, car on nous indique que 81% des citations relient deux articles du même thème, et il y a en moyenne 3.9 arcs par article.
     """)
     return
 
@@ -262,7 +262,18 @@ def _(torch):
     def normaliser_adjacence(A):
         """A : (N, N) à valeurs 0/1. Renvoie D^(-1/2) (A + I) D^(-1/2), sans modifier A."""
         # TODO 1
-        raise NotImplementedError("À compléter")
+        N = len(A)
+
+        a = A + torch.eye(N)
+
+        d = torch.asarray([1 + sum(A[i]) for i in range(N)])
+
+        d_inverse = 1 / d
+
+        a_norm = d_inverse.sqrt()[:, None] * a * d_inverse.sqrt()[None, :]
+
+        return a_norm
+
     return (normaliser_adjacence,)
 
 
@@ -294,7 +305,10 @@ def _(nn):
         def forward(self, x, A_norm):  # x : (N, entree), A_norm : (N, N)
             """Chaque nœud transforme ses caractéristiques, puis agrège celles de ses voisins."""
             # TODO 2
-            raise NotImplementedError("À compléter")
+            x = self.lineaire(x)
+            x = A_norm @ x
+            return x
+
     return (CoucheGCN,)
 
 
@@ -377,7 +391,7 @@ def _(mo):
     return (bouton_comparaison,)
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _(
     GAT,
     GCN,
@@ -432,7 +446,7 @@ def _(mo):
     return (bouton_profondeur,)
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _(A_norm, GCN, bouton_profondeur, cora, mo, np, plt, tp):
     _cache = tp.charger_cache("tp5_profondeur")
     mo.stop(not (tp.lance(bouton_profondeur) or _cache is not None), mo.md("Cliquez pour lancer (environ 2 minutes)."))
@@ -469,14 +483,14 @@ def _(mo):
     return
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
     **Votre réponse :**
 
-    1. ...
-    2. ...
-    3. ...
+    1. Nous utilisons toutes les informations à notre disposition et nous gagnons en précision de prédiction.
+    2. L'attention de GAT n'apporte pas de chose significative au jeu, les papiers cités ont à peu près le même influence sur le thème d'un papier. Elle fait une vraie différence pour les graphes pondérés (par exemple si on donne un poids au papiers cités correspondant au nombre de fois où il ont été évoqués dans le papier dont on cherche à trouver le thème).
+    3. Le GCN est le plus performant plus performant avec 2 couches. Avec peu de profondeur, on peut penser que le modèle ne peut pas explorer la complexité de la combinaison des informations. Tandis qu'avec trop de profondeur, on rencontre le problème de sur-lissage, les sommets sont difficilement différentiables entre eux; sans connexions résiduelles, pour les réseaux profonds, on a aussi le problème d'annulation de gradiant.
     """)
     return
 
@@ -517,7 +531,15 @@ def _(np):
     def recommander(embeddings, noeud, k, deja_lies):
         """Indices des k nœuds les plus similaires à `noeud`, hors lui-même et hors `deja_lies`."""
         # TODO 3
-        raise NotImplementedError("À compléter")
+        scores = []
+        for i in range(len(embeddings)):
+            if ((i == noeud) or (i in deja_lies)):
+                scores.append(-np.inf)
+            else:
+                scores.append(np.dot(embeddings[i], embeddings[noeud]) / (np.linalg.norm(embeddings[i]) * np.linalg.norm(embeddings[noeud])))
+
+        return np.argsort(scores, descending=True)[:k]
+
     return (recommander,)
 
 
@@ -535,7 +557,7 @@ def _(mo):
     return (bouton_reco,)
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _(
     GCN,
     bouton_reco,
@@ -580,10 +602,10 @@ def _(
     return
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    **Votre réponse :**
+    **Questions**
 
     1. Votre pronostic était-il le bon ? Quel embedding gagne, et a-t-il demandé un entraînement ?
     2. Le GCN est le meilleur modèle pour classer les thèmes. Pourquoi sa couche cachée est-elle si mal placée
@@ -592,7 +614,11 @@ def _(mo):
     3. Transposez à un site de commerce en ligne : que seraient les nœuds, les arêtes, les caractéristiques, et
        qu'est-ce qu'une « citation cachée » ?
 
-    ...
+    **Votre réponse :**
+
+    1. Mon pronostic était bon, l'embedding de mots partagés deux fois gagne, sans apprentissage supplémentaire.
+    2. Nous avons besoin des représentations séparant les articles de différents thèmes, donc on rapproche des articles du même thème. Or pour distinguer deux articles du même thème, on a besoin d'éloigner un minimum ces articles, afin de pouvoir prédire les articles pertinents selon le contenu en détail.
+    3. Nous avons comme noeuds les articles et les consommateurs; les arêtes représentes les achats; les caractéristiques peuvent être composées de coût, du nombre d'achat, du fabricant, de la description et des commentaires; on peut considérer les articles pouvant intéressé les consommateurs comme citation cachée.
     """)
     return
 
@@ -619,16 +645,16 @@ def _(mo):
     return
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
     | Rubrique | Classer des articles avec 140 étiquettes | Recommander des citations |
     |---|---|---|
-    | Baselines classiques et leurs scores | ... | ... |
-    | Méthode retenue et pourquoi | ... | ... |
-    | Score obtenu | ... | ... |
-    | Le deep learning est-il justifié ? | ... | ... |
-    | Limite principale pour un graphe industriel (millions de nœuds, nouveaux nœuds chaque jour) | ... | ... |
+    | Baselines classiques et leurs scores | propagation d'étiquettes \| accuracy = 72.9% | lignes de la matrice d'adjacence \| accuracy@20 = 40.4% |
+    | Méthode retenue et pourquoi | GCN 2 couches, meilleur score | propagation 2 fois des mots, meilleur score |
+    | Score obtenu | accuracy = 81.7% | accuracy@20 = 52.4%  |
+    | Le deep learning est-il justifié ? | Oui | Non |
+    | Limite principale pour un graphe industriel (millions de nœuds, nouveaux nœuds chaque jour) | Renouvellement fréquent | Renouvellement fréquent |
 
     ### Pour aller plus loin (si vous avez terminé)
 
