@@ -1,6 +1,6 @@
 import marimo
 
-__generated_with = "0.25.0"
+__generated_with = "0.25.1"
 app = marimo.App(
     width="medium",
     app_title="TD 4 - Foundation models et IA générative",
@@ -179,7 +179,7 @@ def _(mo):
     return (bouton_clip,)
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _(bouton_clip, mo, tp):
     _pret = ((tp.MODELES / "clip_vitb32_laion400m.pt").exists() and tp.ppe_pret()) or tp.MODE_TEST
     mo.stop(not (tp.lance(bouton_clip) or _pret),
@@ -227,17 +227,15 @@ def _(mo):
     return
 
 
-@app.cell
-def _(np):
-    def similarite_cosinus(A, B):
-        """A : (n, d), B : (m, d) -> tableau (n, m) des similarités cosinus."""
-        # TODO 1
-        raise NotImplementedError("À compléter")
-    return (similarite_cosinus,)
+@app.function
+def similarite_cosinus(A, B):
+    """A : (n, d), B : (m, d) -> tableau (n, m) des similarités cosinus."""
+    # TODO 1
+    raise NotImplementedError("À compléter")
 
 
 @app.cell(hide_code=True)
-def _(mo, similarite_cosinus, tests, tp):
+def _(mo, tests, tp):
     ok_todo1, _affichage = tp.verifier(tests.tests_cosinus(similarite_cosinus), mo)
     _affichage
     return (ok_todo1,)
@@ -258,17 +256,15 @@ def _(mo):
     return
 
 
-@app.cell
-def _(np, similarite_cosinus):
-    def classer_zero_shot(emb_images, emb_textes, temperature=100):
-        """Probabilité de chaque classe pour chaque image : softmax(temperature x cosinus)."""
-        # TODO 2
-        raise NotImplementedError("À compléter")
-    return (classer_zero_shot,)
+@app.function
+def classer_zero_shot(emb_images, emb_textes, temperature=100):
+    """Probabilité de chaque classe pour chaque image : softmax(temperature x cosinus)."""
+    # TODO 2
+    raise NotImplementedError("À compléter")
 
 
 @app.cell(hide_code=True)
-def _(classer_zero_shot, mo, ok_todo1, tests, tp):
+def _(mo, ok_todo1, tests, tp):
     tp.bloquer_si(not ok_todo1, mo, "Terminez le TODO 1 d'abord.")
     ok_todo2, _affichage = tp.verifier(tests.tests_zero_shot(classer_zero_shot), mo)
     _affichage
@@ -314,7 +310,6 @@ def _(mo):
 
 @app.cell
 def _(
-    classer_zero_shot,
     clip_modele,
     clip_tokeniseur,
     emb_vignettes,
@@ -483,17 +478,15 @@ def _(mo):
     return
 
 
-@app.cell
-def _(np, similarite_cosinus):
-    def rechercher(emb_requete, emb_corpus, k=5):
-        """Indices des k éléments du corpus les plus proches de la requête (similarité cosinus décroissante)."""
-        # TODO 3
-        raise NotImplementedError("À compléter")
-    return (rechercher,)
+@app.function
+def rechercher(emb_requete, emb_corpus, k=5):
+    """Indices des k éléments du corpus les plus proches de la requête (similarité cosinus décroissante)."""
+    # TODO 3
+    raise NotImplementedError("À compléter")
 
 
 @app.cell(hide_code=True)
-def _(mo, ok_todo1, rechercher, tests, tp):
+def _(mo, ok_todo1, tests, tp):
     tp.bloquer_si(not ok_todo1, mo, "Terminez le TODO 1 d'abord.")
     ok_todo3, _affichage = tp.verifier(tests.tests_recherche(rechercher), mo)
     _affichage
@@ -533,7 +526,6 @@ def _(
     emb_corpus,
     mo,
     ok_todo3,
-    rechercher,
     requete,
     tp,
 ):
@@ -559,17 +551,15 @@ def _(mo):
     return
 
 
-@app.cell
-def _(np):
-    def precision_a_k(indices, pertinents, k):
-        """Proportion d'images pertinentes parmi les k premiers résultats."""
-        # TODO 4
-        raise NotImplementedError("À compléter")
-    return (precision_a_k,)
+@app.function
+def precision_a_k(indices, pertinents, k):
+    """Proportion d'images pertinentes parmi les k premiers résultats."""
+    # TODO 4
+    raise NotImplementedError("À compléter")
 
 
 @app.cell(hide_code=True)
-def _(mo, precision_a_k, tests, tp):
+def _(mo, tests, tp):
     ok_todo4, _affichage = tp.verifier(tests.tests_precision_k(precision_a_k), mo)
     _affichage
     return (ok_todo4,)
@@ -583,9 +573,7 @@ def _(
     mo,
     ok_todo3,
     ok_todo4,
-    precision_a_k,
     presence,
-    rechercher,
     tp,
 ):
     tp.bloquer_si(not (ok_todo3 and ok_todo4), mo, "Terminez les TODO 3 et 4 pour évaluer le moteur.")
@@ -636,7 +624,6 @@ def _(
     mo,
     np,
     ok_todo3,
-    rechercher,
     tp,
 ):
     tp.bloquer_si(not ok_todo3, mo, "Terminez le TODO 3 d'abord.")
@@ -1085,8 +1072,6 @@ def _(
     np,
     ok_todo3,
     ok_todo4,
-    precision_a_k,
-    rechercher,
     tp,
 ):
     tp.bloquer_si(not (ok_todo3 and ok_todo4), mo, "Terminez les TODO 3 et 4 d'abord.")
