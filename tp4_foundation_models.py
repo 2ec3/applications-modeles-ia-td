@@ -227,15 +227,31 @@ def _(mo):
     return
 
 
-@app.function
-def similarite_cosinus(A, B):
-    """A : (n, d), B : (m, d) -> tableau (n, m) des similarités cosinus."""
-    # TODO 1
-    raise NotImplementedError("À compléter")
+@app.cell
+def _(np):
+    def similarite_cosinus(A, B):
+        """A : (n, d), B : (m, d) -> tableau (n, m) des similarités cosinus."""
+        # TODO 1
+        n, d = A.shape
+        m, d = B.shape
+
+        a_norm = np.linalg.norm(A, axis=1, keepdims=True)
+        b_norm = np.linalg.norm(B, axis=1, keepdims=True)
+        a = [A[i] / a_norm[i] for i in range(n)]
+        b = [B[i] / b_norm[i] for i in range(m)]
+
+        cos_sim = np.zeros((n, m))
+        for i in range(n):
+            for j in range(m):
+                cos_sim[i][j] = np.dot(a[i], b[j])
+
+        return cos_sim
+
+    return (similarite_cosinus,)
 
 
 @app.cell(hide_code=True)
-def _(mo, tests, tp):
+def _(mo, similarite_cosinus, tests, tp):
     ok_todo1, _affichage = tp.verifier(tests.tests_cosinus(similarite_cosinus), mo)
     _affichage
     return (ok_todo1,)
@@ -256,22 +272,31 @@ def _(mo):
     return
 
 
-@app.function
-def classer_zero_shot(emb_images, emb_textes, temperature=100):
-    """Probabilité de chaque classe pour chaque image : softmax(temperature x cosinus)."""
-    # TODO 2
-    raise NotImplementedError("À compléter")
+@app.cell
+def _(np, similarite_cosinus):
+    def classer_zero_shot(emb_images, emb_textes, temperature=100):
+        """Probabilité de chaque classe pour chaque image : softmax(temperature x cosinus)."""
+        # TODO 2
+        cos_sim = similarite_cosinus(emb_images, emb_textes)
+
+        exp_logits = np.exp(cos_sim * temperature)
+
+        p = exp_logits / np.sum(exp_logits, axis=1, keepdims=True)
+
+        return p
+
+    return (classer_zero_shot,)
 
 
 @app.cell(hide_code=True)
-def _(mo, ok_todo1, tests, tp):
+def _(classer_zero_shot, mo, ok_todo1, tests, tp):
     tp.bloquer_si(not ok_todo1, mo, "Terminez le TODO 1 d'abord.")
     ok_todo2, _affichage = tp.verifier(tests.tests_zero_shot(classer_zero_shot), mo)
     _affichage
     return (ok_todo2,)
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _(clip_modele, clip_pretraitement, mo, tp, vignettes):
     _cache = tp.charger_cache("tp4_emb_vignettes_ppe2026")
     if _cache is None or len(_cache["e"]) != len(vignettes):
@@ -308,8 +333,9 @@ def _(mo):
     return (prompts,)
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _(
+    classer_zero_shot,
     clip_modele,
     clip_tokeniseur,
     emb_vignettes,
@@ -352,21 +378,26 @@ def _(accuracy_zero_shot, bouton_mesure, mo, tp):
     return
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    **Votre réponse :** notez les formulations essayées et leur score. Laquelle marche le mieux ? Pourquoi la
+    **Questions** notez les formulations essayées et leur score. Laquelle marche le mieux ? Pourquoi la
     formulation change-t-elle le résultat, alors que le modèle et les images sont identiques ?
 
     | Formulation | Accuracy sur les vignettes de réglage |
     |---|---|
-    | mots seuls, en anglais | |
-    | « a photo of a ... » | |
-    | descriptions précises | |
-    | en français | |
+    | mots seuls, en anglais | 86.9% |
+    | « a photo of a ... » | 89.7% |
+    | descriptions précises | 90.1% |
+    | en français | 86.5% |
 
-    Formulation retenue : ... Accuracy sur les vignettes mises de côté : ... Diffère-t-elle de l'accuracy de
-    réglage ? Pour quelles raisons pourrait-elle en différer ?
+    Formulation retenue : « a photo of a protection ... » <br>
+    Accuracy sur les vignettes mises de côté : 92.8% <br>
+    Diffère-t-elle de l'accuracy de réglage ? Pour quelles raisons pourrait-elle en différer ?
+
+    **Votre réponse :**
+    La formulation change le résultat car ceci change l'embedding des phrases correspondant au classes, ce qui influence la comparaison avec les images.
+    L'accuracy sur les vignettes mises de côté est meilleur que l'accuracy de réglage. Elle peut différer car les images n'ont pas les mêmes embedding en fonction de leur forme, angle, taille, etc (aussi de la distribution des classes si la séparation n'est pas stratifiée).
     """)
     return
 
@@ -392,7 +423,7 @@ def _(mo):
     return (bouton_fewshot,)
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _(
     accuracy_zero_shot,
     bouton_fewshot,
@@ -448,14 +479,14 @@ def _(mo):
     return
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
     **Votre réponse :**
 
-    1. ...
-    2. ...
-    3. ...
+    1. Le sonde linéaire dépasse le zéro-shot, à partir de 2 exemples par classe
+    2. La sonde linéaire dépasse de très loin l'approche classique. L'écart réduit quand le nombre d'exemples augmente, mais l'écart reste énorme.
+    3. Le zéro-shot est la seule option réaliste si on ne connait pas à l'avance toute les classes qu'on veut détecter, ou quand les classes ont une mise à jour quotidient.
     """)
     return
 
@@ -478,22 +509,27 @@ def _(mo):
     return
 
 
-@app.function
-def rechercher(emb_requete, emb_corpus, k=5):
-    """Indices des k éléments du corpus les plus proches de la requête (similarité cosinus décroissante)."""
-    # TODO 3
-    raise NotImplementedError("À compléter")
+@app.cell
+def _(np, similarite_cosinus):
+    def rechercher(emb_requete, emb_corpus, k=5):
+        """Indices des k éléments du corpus les plus proches de la requête (similarité cosinus décroissante)."""
+        # TODO 
+        cos_sim = similarite_cosinus(emb_requete[np.newaxis, :], emb_corpus)[0]
+
+        return np.argsort(-cos_sim)[:k]
+
+    return (rechercher,)
 
 
 @app.cell(hide_code=True)
-def _(mo, ok_todo1, tests, tp):
+def _(mo, ok_todo1, rechercher, tests, tp):
     tp.bloquer_si(not ok_todo1, mo, "Terminez le TODO 1 d'abord.")
     ok_todo3, _affichage = tp.verifier(tests.tests_recherche(rechercher), mo)
     _affichage
     return (ok_todo3,)
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _(clip_modele, clip_pretraitement, dossier_ppe, mo, np, tp):
     corpus = tp.lister_images(dossier_ppe, "train")[:500]
     _cache = tp.charger_cache("tp4_emb_corpus_ppe2026")
@@ -518,7 +554,7 @@ def _(mo):
     return (requete,)
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _(
     clip_modele,
     clip_tokeniseur,
@@ -526,6 +562,7 @@ def _(
     emb_corpus,
     mo,
     ok_todo3,
+    rechercher,
     requete,
     tp,
 ):
@@ -555,7 +592,16 @@ def _(mo):
 def precision_a_k(indices, pertinents, k):
     """Proportion d'images pertinentes parmi les k premiers résultats."""
     # TODO 4
-    raise NotImplementedError("À compléter")
+    tp = 0
+    fp = 0
+
+    for i in indices[:k]:
+        if (pertinents[i]):
+            tp += 1
+        else:
+            fp += 1
+
+    return tp / (tp + fp)
 
 
 @app.cell(hide_code=True)
@@ -565,7 +611,7 @@ def _(mo, tests, tp):
     return (ok_todo4,)
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _(
     clip_modele,
     clip_tokeniseur,
@@ -574,6 +620,7 @@ def _(
     ok_todo3,
     ok_todo4,
     presence,
+    rechercher,
     tp,
 ):
     tp.bloquer_si(not (ok_todo3 and ok_todo4), mo, "Terminez les TODO 3 et 4 pour évaluer le moteur.")
@@ -613,7 +660,7 @@ def _(mo):
     return (image_requete,)
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _(
     clip_modele,
     clip_pretraitement,
@@ -624,6 +671,7 @@ def _(
     mo,
     np,
     ok_todo3,
+    rechercher,
     tp,
 ):
     tp.bloquer_si(not ok_todo3, mo, "Terminez le TODO 3 d'abord.")
@@ -644,14 +692,16 @@ def _(
     return
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    **Votre réponse :** sur quoi chaque méthode s'appuie-t-elle pour juger que deux images se ressemblent ?
+    **Questions:** sur quoi chaque méthode s'appuie-t-elle pour juger que deux images se ressemblent ?
     Laquelle retrouve le *contenu* (ce que font les personnes, ce qu'elles portent) ? Comparez la précision
     des différentes requêtes : lesquelles réussissent, lesquelles échouent, et comment l'expliquez-vous ?
 
-    ...
+    **Votre réponse :** <br>
+    CLIP utilise les vecteurs d'embedding pour juger que deux images se ressemblent, cette méthode compare la projection des images dans le latent space; tandis que la méthode classique, histogrammes de couleur, utilise la répartition des couleurs au sein des images, ainsi que l'orientation des courbes. CLIP retrouve d'avantage le détail des contenu. <br>
+    Les requêtes testées pour la plupart une bonne précision à 10 (supérieur à 70%), sauf pour la requête "a person without a helmet". Je pense que c'est dû au fait que le modèle n'a pas assez appris à reconnaître la négation: il est plus efficace à détecter une présence qu'une absence.
     """)
     return
 
@@ -689,15 +739,20 @@ def _(mo):
     return
 
 
-@app.function
-def bruiter(x0, t, alphas_cumules, bruit):
-    """Saute directement à l'étape t du bruitage : x_t = racine(ac) x0 + racine(1 - ac) bruit."""
-    # TODO 5
-    raise NotImplementedError("À compléter")
+@app.cell
+def _(torch):
+    def bruiter(x0, t, alphas_cumules, bruit):
+        """Saute directement à l'étape t du bruitage : x_t = racine(ac) x0 + racine(1 - ac) bruit."""
+        # TODO 5
+        alpha = alphas_cumules[t].reshape(-1, *[1] * (x0.dim() - 1))
+    
+        return torch.sqrt(alpha) * x0 + torch.sqrt(1 - alpha) * bruit
+
+    return (bruiter,)
 
 
 @app.cell(hide_code=True)
-def _(mo, tests, tp):
+def _(bruiter, mo, tests, tp):
     ok_todo5, _affichage = tp.verifier(tests.tests_bruiter(bruiter), mo)
     _affichage
     return (ok_todo5,)
@@ -711,15 +766,15 @@ def _(mo):
     return etape_2d, forme_2d
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _(forme_2d, torch, tp):
     betas, alphas, alphas_cumules = tp.planning_diffusion()
     points = torch.tensor(tp.points_2d(3000, forme_2d.value))
     return alphas, alphas_cumules, betas, points
 
 
-@app.cell
-def _(alphas_cumules, etape_2d, mo, ok_todo5, plt, points, torch, tp):
+@app.cell(hide_code=True)
+def _(alphas_cumules, bruiter, etape_2d, mo, ok_todo5, plt, points, torch, tp):
     tp.bloquer_si(not ok_todo5, mo, "Terminez le TODO 5 pour voir le bruitage.")
     torch.manual_seed(0)
     _xt = bruiter(points, torch.full((len(points),), etape_2d.value), alphas_cumules, torch.randn_like(points))
@@ -769,11 +824,12 @@ def _(mo):
     return (bouton_2d,)
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _(
     Debruiteur2D,
     alphas_cumules,
     bouton_2d,
+    bruiter,
     mo,
     ok_todo5,
     plt,
@@ -825,26 +881,35 @@ def _(mo):
     return
 
 
-@app.function
-def etape_debruitage(x_t, t, bruit_predit, betas, alphas, alphas_cumules, z):
-    """Calcule x_(t-1) à partir de x_t et du bruit prédit. z : bruit frais, ignoré quand t == 0."""
-    # TODO 6
-    raise NotImplementedError("À compléter")
+@app.cell
+def _(torch):
+    def etape_debruitage(x_t, t, bruit_predit, betas, alphas, alphas_cumules, z):
+        """Calcule x_(t-1) à partir de x_t et du bruit prédit. z : bruit frais, ignoré quand t == 0."""
+        # TODO 6
+        x_t_ = (x_t - betas[t] / torch.sqrt(1 - alphas_cumules[t]) * bruit_predit) / torch.sqrt(alphas[t])
+
+        if (t > 0):
+            x_t_ += torch.sqrt(betas[t]) * z
+
+        return x_t_
+
+    return (etape_debruitage,)
 
 
 @app.cell(hide_code=True)
-def _(mo, tests, tp):
+def _(etape_debruitage, mo, tests, tp):
     ok_todo6, _affichage = tp.verifier(tests.tests_debruitage(etape_debruitage), mo)
     _affichage
     return (ok_todo6,)
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _(
     alphas,
     alphas_cumules,
     betas,
     debruiteur_2d,
+    etape_debruitage,
     mo,
     ok_todo6,
     plt,
@@ -878,14 +943,16 @@ def _(
     return
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    **Votre réponse :** les points générés sont-ils des copies des points d'entraînement, ou de nouveaux points
+    **Question :**
+    les points générés sont-ils des copies des points d'entraînement, ou de nouveaux points
     qui suivent la même forme ? Que se passe-t-il si vous supprimez le bruit frais $z$ dans votre TODO 6
     (essayez, puis remettez-le) ?
 
-    ...
+    **Votre réponse :** <br>
+    Les points générés sont de nouveaux points qui suivent la même forme. Justement, les bruits frais permet d'ajouter de l'aléa à la génération, les retirer rend le modèle déterministe.
     """)
     return
 
@@ -922,12 +989,13 @@ def _(mo, tp):
     return bouton_gen, gen_classe, gen_force
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _(
     alphas,
     alphas_cumules,
     betas,
     bouton_gen,
+    etape_debruitage,
     gen_classe,
     gen_force,
     mo,
@@ -960,13 +1028,14 @@ def _(
     return
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    **Votre réponse :** comparez $g = 0$, $g = 2$ et $g = 5$ pour la même classe. Que gagne-t-on et que
+    **Questions :** comparez $g = 0$, $g = 2$ et $g = 5$ pour la même classe. Que gagne-t-on et que
     perd-on quand $g$ augmente ? Les 12 images sont-elles identiques ? D'où vient leur diversité ?
 
-    ...
+    **Votre réponse :** <br>
+    Quand $g$ augmente, on gagne en cohérence avec le guidage, mais on perd en qualité d'image. Les 12 images générées ne sont pas identiques, leur diversité viens du bruit ajouté à chaque étape.
     """)
     return
 
@@ -997,19 +1066,19 @@ def _(mo):
     return
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
     | Rubrique | Votre réponse |
     |---|---|
     | Problème métier | Retrouver dans une banque d'images de chantier les situations décrites par un responsable sécurité |
-    | Baseline classique et son score | ... |
-    | Modèle retenu et pourquoi | ... |
-    | Métrique principale et score obtenu | ... |
-    | Coût (annotation, entraînement, inférence, matériel) | ... |
-    | Principaux cas d'échec | ... |
-    | Le foundation model est-il justifié ici ? | ... |
-    | Déployable en l'état ? Sinon, que manque-t-il ? | ... |
+    | Baseline classique et son score | histogrammes de couleur \| Précision@k absent, pas de jeu de test |
+    | Modèle retenu et pourquoi | CLIP |
+    | Métrique principale et score obtenu | Précision@k que pour quelques exemple, manque de jeu de test conséquent |
+    | Coût (annotation, entraînement, inférence, matériel) | Pas de coût supplémentaire par rapport au CLIP de base |
+    | Principaux cas d'échec | Négation de mots |
+    | Le foundation model est-il justifié ici ? | Oui |
+    | Déployable en l'état ? Sinon, que manque-t-il ? | Oui |
     """)
     return
 
@@ -1022,17 +1091,24 @@ def _(mo):
     return
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    **Votre réponse :** comparez le YOLO fine-tuné du TD 2 et CLIP utilisé aujourd'hui, selon trois critères :
+    **Questions :** comparez le YOLO fine-tuné du TD 2 et CLIP utilisé aujourd'hui, selon trois critères :
     le nombre d'images annotées nécessaires, le temps de calcul avant d'obtenir un premier résultat, et la
     qualité du résultat. Attention : les deux ne résolvent pas le même problème. Le YOLO localise 11 classes dans
     l'image entière ; CLIP nomme ici, parmi 5 classes, un objet déjà découpé. Dites ce qui se compare directement
     et ce qui ne se compare pas. Dans quel cas partiriez-vous d'un foundation model, dans quel cas d'un modèle
     spécialisé ?
 
-    ...
+    **Votre réponse :** <br>
+    Au TD 2, pour fine-tuné YOLO, il a fallu 700 images annotées et 50 minutes d'entraînement. CLIP a été entraîné avec 400 millions de paires d'images et légendes sur le web, mais le zero-shot sur notre cas d'étude, pas besion d'entraînement supplémentaire. <br>
+    Le temps de calcul avant d'obtenir un premier résultat est un peu plus long pour CLIP (besoin de calculer l'embedding pour tous les images et descriptions qui doivent être comparées). <br>
+    Pour les deux modèles, nous avons des précision au alentour de 70%.
+
+    YOLO résout le problème de segmentation de détection d'images, alors que CLIP classe. On ne peut donc pas les comparer directement, mais on peut comparer la précision de classification de YOLO parmi les objets détectés avec CLIP.
+
+    Je partirais sur un foundation model si la tâche fait partie des données d'entraînement du modèle, ou bien si la tâche est assez général. Et sur un modèle spécialisé si la tâche est spécifique, ne pouvant être trouvé dans les données d'entraînement d'un foundation model.
     """)
     return
 
@@ -1063,7 +1139,7 @@ def _(mo):
     return (bouton_neu,)
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _(
     bouton_neu,
     clip_modele,
@@ -1072,6 +1148,7 @@ def _(
     np,
     ok_todo3,
     ok_todo4,
+    rechercher,
     tp,
 ):
     tp.bloquer_si(not (ok_todo3 and ok_todo4), mo, "Terminez les TODO 3 et 4 d'abord.")
